@@ -28,5 +28,6 @@ class CNN(Trainer):
         return predict
 
 cnn = CNN()
+cnn.to(cnn.device)
 model = cnn.train_model(num_epoch_to_log=1, learning_rate=1e-3, weight_decay=0, epochs=20)
 cnn.test(model)

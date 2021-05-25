@@ -28,13 +28,13 @@ class Trainer(nn.Module):
         trainset.data = trainset.data[train_indexes]
         trainset.targets = list(np.array(trainset.targets)[train_indexes])
         self.trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size,
-                                                  shuffle=True, num_workers=2, drop_last=True)
+                                                  shuffle=True, num_workers=4, drop_last=True)
         # init validation set
         validate_indexes = random_indexes[num_train:num_train + num_val]
         validateset.data = validateset.data[validate_indexes]
         validateset.targets = list(np.array(validateset.targets)[validate_indexes])
         self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validateset.data),
-                                                  shuffle=False, num_workers=2)
+                                                  shuffle=False, num_workers=4)
         # init test set
         testset = torchvision.datasets.CIFAR10(root='./dataset', train=False, download=False, transform=transform)
         self.testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset.data),
@@ -42,11 +42,12 @@ class Trainer(nn.Module):
         # self.num_feature = 1 * 3 * 32 * 32
         self.num_feature = num_feature
         self.num_label = 10
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def map_feature(self, inputs):
         inputs = inputs.reshape(len(inputs), -1)
         # inputs, _, _ = torch.pca_lowrank(inputs, self.num_feature)
-        return torch.tensor(inputs)
+        return torch.tensor(inputs).to(self.device)
 
     def train_model(self, learning_rate=1e-4, epochs=100, num_epoch_to_log=5, weight_decay=0):
         criterion = nn.CrossEntropyLoss()
@@ -58,7 +59,7 @@ class Trainer(nn.Module):
             for i, data in enumerate(self.trainloader, 0):
                 inputs, labels = data
                 inputs = self.map_feature(inputs)
-                inputs, labels = Variable(inputs), Variable(labels)
+                inputs, labels = Variable(inputs).to(self.device), Variable(labels).to(self.device)
                 outputs = self(inputs)
                 loss = criterion(outputs, labels)
                 optimizer.zero_grad()
@@ -76,7 +77,7 @@ class Trainer(nn.Module):
 
     def get_accuracy(self, predict, labels):
         y = predict.max(-1)[1]
-        return np.sum((labels.numpy() == y.numpy()).astype(int)) / len(labels)
+        return np.sum((labels.cpu().numpy() == y.cpu().numpy()).astype(int)) / len(labels)
 
     def test(self, model):
         test_x, test_labels = iter(self.testloader).next()
