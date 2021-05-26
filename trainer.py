@@ -9,6 +9,10 @@ import copy
 class Trainer(nn.Module):
     def __init__(self, train_percentage=0.95, num_feature=3 * 32 * 32, train_batch_size=400):
         super(Trainer, self).__init__()
+        self.num_feature = num_feature
+        self.num_label = 10
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
         train_transform = transforms.Compose([
             # transforms.RandomHorizontalFlip(),
             transforms.RandomResizedCrop((32, 32)),
@@ -20,29 +24,24 @@ class Trainer(nn.Module):
         ])
         # init train set
         trainset = torchvision.datasets.CIFAR10(root='./dataset', train=True, download=False, transform=train_transform)
-        validateset = copy.deepcopy(trainset)
-        num_train = int(len(trainset.data) * train_percentage)
-        num_val = min(len(trainset.data) - num_train, int(num_train * 0.1))
-        random_indexes = np.random.permutation(range(0, len(trainset.data)))
+        trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size)
+        train_x, train_labels = iter(trainloader).next()
+        num_train = int(len(train_x) * train_percentage)
+        num_val = min(len(train_x) - num_train, int(num_train * 0.1))
+        random_indexes = np.random.permutation(range(0, len(train_x)))
         train_indexes = random_indexes[:num_train]
-        trainset.data = trainset.data[train_indexes]
-        trainset.targets = list(np.array(trainset.targets)[train_indexes])
+        trainset = torch.utils.data.TensorDataset(train_x[train_indexes], train_labels[train_indexes])
         self.trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size,
-                                                  shuffle=True, num_workers=4, drop_last=True)
-        # init validation set
+                                                       shuffle=True, drop_last=True)
+
         validate_indexes = random_indexes[num_train:num_train + num_val]
-        validateset.data = validateset.data[validate_indexes]
-        validateset.targets = list(np.array(validateset.targets)[validate_indexes])
-        self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validateset.data),
-                                                  shuffle=False, num_workers=4)
+        validateset = torch.utils.data.TensorDataset(train_x[validate_indexes], train_labels[validate_indexes])
+        self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validate_indexes))
+
         # init test set
         testset = torchvision.datasets.CIFAR10(root='./dataset', train=False, download=False, transform=transform)
         self.testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset.data),
                                                   shuffle=False, num_workers=2)
-        # self.num_feature = 1 * 3 * 32 * 32
-        self.num_feature = num_feature
-        self.num_label = 10
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def map_feature(self, inputs):
         inputs = inputs.reshape(len(inputs), -1)
