@@ -14,16 +14,30 @@ class Trainer(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         train_transform = transforms.Compose([
-            # transforms.RandomHorizontalFlip(),
-            # transforms.RandomResizedCrop((32, 32)),
-            # transforms.ColorJitter(),
+            #transforms.RandomHorizontalFlip(),
+            #transforms.RandomCrop(32, padding=4),
+            #transforms.ColorJitter(),
             transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.2, 0.2, 0.2)),
         ])
         transform = transforms.Compose([
             transforms.ToTensor(),
         ])
         # init train set
         trainset = torchvision.datasets.CIFAR10(root='./dataset', train=True, download=False, transform=train_transform)
+        #validateset = copy.deepcopy(trainset)
+        #random_indexes = np.random.permutation(range(0, len(trainset.data)))
+        #num_train = int(len(trainset.data) * train_percentage)
+        #num_val = min(len(trainset.data) - num_train, int(num_train * 0.1))
+        #train_indexes = random_indexes[:num_train]
+        #trainset.data = trainset.data[train_indexes]
+        #trainset.targets = list(np.array(trainset.targets)[train_indexes])
+        #self.trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size, shuffle=True, drop_last=True, pin_memory=True)
+        #validate_indexes = random_indexes[num_train:num_train + num_val]
+        #validateset.data = validateset.data[validate_indexes]
+        #validateset.targets = list(np.array(validateset.targets)[validate_indexes])
+        #self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validateset.data), pin_memory=True)
+
         trainloader = torch.utils.data.DataLoader(trainset, batch_size=len(trainset.data))
         train_x, train_labels = iter(trainloader).next()
         train_x = train_x.to(self.device)
@@ -34,8 +48,7 @@ class Trainer(nn.Module):
         train_indexes = random_indexes[:num_train]
         self.trainset = torch.utils.data.TensorDataset(train_x[train_indexes], train_labels[train_indexes])
         self.trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=train_batch_size,
-                                                       shuffle=True, drop_last=True)
-
+                                                        shuffle=True, drop_last=True)
         validate_indexes = random_indexes[num_train:num_train + num_val]
         self.validateset = torch.utils.data.TensorDataset(train_x[validate_indexes], train_labels[validate_indexes])
         self.validateloader = torch.utils.data.DataLoader(self.validateset, batch_size=len(validate_indexes))
@@ -67,12 +80,14 @@ class Trainer(nn.Module):
                 optimizer.step()
             scheduler.step()
             if epoch % num_epoch_to_log == 0:
-                self.eval()
-                val_x, val_labels = iter(self.validateloader).next()
-                val_x = self.map_feature(val_x)
-                val_y = self(val_x)
-                print("epoch: {}, loss: {}, accuracy: {}"
-                      .format(epoch, loss.item(), self.get_accuracy(val_y, val_labels)))
+                with torch.no_grad():
+                    self.eval()
+                    val_x, val_labels = iter(self.validateloader).next()
+                    val_x = self.map_feature(val_x)
+                    val_y = self(val_x.to(self.device))
+                    print("epoch: {}, loss: {}, train acc: {}, val acc: {}"
+                          .format(epoch, loss.item(), self.get_accuracy(outputs, labels),
+                              self.get_accuracy(val_y, val_labels)))
         return self
 
     def get_accuracy(self, predict, labels):
@@ -82,7 +97,7 @@ class Trainer(nn.Module):
     def test(self, model):
         test_x, test_labels = iter(self.testloader).next()
         test_x = self.map_feature(test_x)
-        y = model(test_x)
-        predict = y.max(-1)[1]
-        accuracy = np.sum((test_labels.numpy() == np.array(predict)).astype(int)) / len(test_labels)
+        y = model(test_x.to(self.device))
+        predict = y.max(-1)[1].cpu().numpy()
+        accuracy = np.sum((test_labels.cpu().numpy() == np.array(predict)).astype(int)) / len(test_labels)
         print("Test accuracy: {}".format(accuracy))
