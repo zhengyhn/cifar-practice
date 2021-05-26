@@ -15,7 +15,7 @@ class Trainer(nn.Module):
 
         train_transform = transforms.Compose([
             # transforms.RandomHorizontalFlip(),
-            transforms.RandomResizedCrop((32, 32)),
+            # transforms.RandomResizedCrop((32, 32)),
             # transforms.ColorJitter(),
             transforms.ToTensor(),
         ])
@@ -24,19 +24,21 @@ class Trainer(nn.Module):
         ])
         # init train set
         trainset = torchvision.datasets.CIFAR10(root='./dataset', train=True, download=False, transform=train_transform)
-        trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size)
+        trainloader = torch.utils.data.DataLoader(trainset, batch_size=len(trainset.data))
         train_x, train_labels = iter(trainloader).next()
+        train_x = train_x.to(self.device)
+        train_labels = train_labels.to(self.device)
         num_train = int(len(train_x) * train_percentage)
         num_val = min(len(train_x) - num_train, int(num_train * 0.1))
         random_indexes = np.random.permutation(range(0, len(train_x)))
         train_indexes = random_indexes[:num_train]
-        trainset = torch.utils.data.TensorDataset(train_x[train_indexes], train_labels[train_indexes])
-        self.trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size,
+        self.trainset = torch.utils.data.TensorDataset(train_x[train_indexes], train_labels[train_indexes])
+        self.trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=train_batch_size,
                                                        shuffle=True, drop_last=True)
 
         validate_indexes = random_indexes[num_train:num_train + num_val]
-        validateset = torch.utils.data.TensorDataset(train_x[validate_indexes], train_labels[validate_indexes])
-        self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validate_indexes))
+        self.validateset = torch.utils.data.TensorDataset(train_x[validate_indexes], train_labels[validate_indexes])
+        self.validateloader = torch.utils.data.DataLoader(self.validateset, batch_size=len(validate_indexes))
 
         # init test set
         testset = torchvision.datasets.CIFAR10(root='./dataset', train=False, download=False, transform=transform)
@@ -46,7 +48,7 @@ class Trainer(nn.Module):
     def map_feature(self, inputs):
         inputs = inputs.reshape(len(inputs), -1)
         # inputs, _, _ = torch.pca_lowrank(inputs, self.num_feature)
-        return torch.tensor(inputs).to(self.device)
+        return inputs.to(self.device)
 
     def train_model(self, learning_rate=1e-4, epochs=100, num_epoch_to_log=5, weight_decay=0):
         criterion = nn.CrossEntropyLoss()
@@ -55,8 +57,7 @@ class Trainer(nn.Module):
                                                                last_epoch=-1)
         for epoch in range(epochs):
             self.train()
-            for i, data in enumerate(self.trainloader, 0):
-                inputs, labels = data
+            for inputs, labels in self.trainloader:
                 inputs = self.map_feature(inputs)
                 inputs, labels = Variable(inputs).to(self.device), Variable(labels).to(self.device)
                 outputs = self(inputs)
