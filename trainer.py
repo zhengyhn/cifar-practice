@@ -22,6 +22,7 @@ class Trainer(nn.Module):
         ])
         transform = transforms.Compose([
             transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.2, 0.2, 0.2)),
         ])
         # init train set
         trainset = torchvision.datasets.CIFAR10(root='./dataset', train=True, download=False, transform=train_transform)
@@ -38,20 +39,19 @@ class Trainer(nn.Module):
         #validateset.targets = list(np.array(validateset.targets)[validate_indexes])
         #self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validateset.data), pin_memory=True)
 
-        trainloader = torch.utils.data.DataLoader(trainset, batch_size=len(trainset.data))
+        trainloader = torch.utils.data.DataLoader(trainset, batch_size=len(trainset.data), shuffle=True)
         train_x, train_labels = iter(trainloader).next()
+
         train_x = train_x.to(self.device)
         train_labels = train_labels.to(self.device)
         num_train = int(len(train_x) * train_percentage)
-        num_val = min(len(train_x) - num_train, int(num_train * 0.1))
-        random_indexes = np.random.permutation(range(0, len(train_x)))
-        train_indexes = random_indexes[:num_train]
-        self.trainset = torch.utils.data.TensorDataset(train_x[train_indexes], train_labels[train_indexes])
+        num_val = min(len(train_x) - num_train, int(num_train * 0.01))
+        self.trainset = torch.utils.data.TensorDataset(train_x[:num_train], train_labels[:num_train])
         self.trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=train_batch_size,
                                                         shuffle=True, drop_last=True)
-        validate_indexes = random_indexes[num_train:num_train + num_val]
-        self.validateset = torch.utils.data.TensorDataset(train_x[validate_indexes], train_labels[validate_indexes])
-        self.validateloader = torch.utils.data.DataLoader(self.validateset, batch_size=len(validate_indexes))
+        self.validateset = torch.utils.data.TensorDataset(train_x[num_train:num_train + num_val],
+                                                          train_labels[num_train:num_train + num_val])
+        self.validateloader = torch.utils.data.DataLoader(self.validateset, batch_size=num_val)
 
         # init test set
         testset = torchvision.datasets.CIFAR10(root='./dataset', train=False, download=False, transform=transform)
