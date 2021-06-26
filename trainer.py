@@ -14,48 +14,50 @@ class Trainer(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         train_transform = transforms.Compose([
-            #transforms.RandomHorizontalFlip(),
-            #transforms.RandomCrop(32, padding=4),
-            #transforms.ColorJitter(),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(),
+            transforms.RandomCrop(32, padding=4),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.2, 0.2, 0.2)),
+            #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            #transforms.Normalize((0.5, 0.5, 0.5), (0.2, 0.2, 0.2)),
         ])
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.2, 0.2, 0.2)),
+            #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            #transforms.Normalize((0.5, 0.5, 0.5), (0.2, 0.2, 0.2)),
         ])
-        # init train set
         trainset = torchvision.datasets.CIFAR10(root='./dataset', train=True, download=False, transform=train_transform)
-        #validateset = copy.deepcopy(trainset)
-        #random_indexes = np.random.permutation(range(0, len(trainset.data)))
-        #num_train = int(len(trainset.data) * train_percentage)
-        #num_val = min(len(trainset.data) - num_train, int(num_train * 0.1))
-        #train_indexes = random_indexes[:num_train]
-        #trainset.data = trainset.data[train_indexes]
-        #trainset.targets = list(np.array(trainset.targets)[train_indexes])
-        #self.trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size, shuffle=True, drop_last=True, pin_memory=True)
-        #validate_indexes = random_indexes[num_train:num_train + num_val]
-        #validateset.data = validateset.data[validate_indexes]
-        #validateset.targets = list(np.array(validateset.targets)[validate_indexes])
-        #self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validateset.data), pin_memory=True)
+        # load from disk
+        validateset = copy.deepcopy(trainset)
+        random_indexes = np.random.permutation(range(0, len(trainset.data)))
+        num_train = int(len(trainset.data) * train_percentage)
+        num_val = min(len(trainset.data) - num_train, int(num_train * 0.1))
+        train_indexes = random_indexes[:num_train]
+        trainset.data = trainset.data[train_indexes]
+        trainset.targets = list(np.array(trainset.targets)[train_indexes])
+        self.trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size, shuffle=True, drop_last=True, pin_memory=True)
+        validate_indexes = random_indexes[num_train:num_train + num_val]
+        validateset.data = validateset.data[validate_indexes]
+        validateset.targets = list(np.array(validateset.targets)[validate_indexes])
+        self.validateloader = torch.utils.data.DataLoader(validateset, batch_size=len(validateset.data), pin_memory=True)
 
-        trainloader = torch.utils.data.DataLoader(trainset, batch_size=len(trainset.data), shuffle=True)
-        train_x, train_labels = iter(trainloader).next()
-
-        train_x = train_x.to(self.device)
-        train_labels = train_labels.to(self.device)
-        num_train = int(len(train_x) * train_percentage)
-        num_val = min(len(train_x) - num_train, int(num_train * 0.01))
-        self.trainset = torch.utils.data.TensorDataset(train_x[:num_train], train_labels[:num_train])
-        self.trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=train_batch_size,
-                                                        shuffle=True, drop_last=True)
-        self.validateset = torch.utils.data.TensorDataset(train_x[num_train:num_train + num_val],
-                                                          train_labels[num_train:num_train + num_val])
-        self.validateloader = torch.utils.data.DataLoader(self.validateset, batch_size=num_val)
+        # load from memory
+        #trainloader = torch.utils.data.DataLoader(trainset, batch_size=len(trainset.data), shuffle=True)
+        #train_x, train_labels = iter(trainloader).next()
+        #train_x = train_x.to(self.device)
+        #train_labels = train_labels.to(self.device)
+        #num_train = int(len(train_x) * train_percentage)
+        #num_val = min(len(train_x) - num_train, int(num_train * 0.01))
+        #self.trainset = torch.utils.data.TensorDataset(train_x[:num_train], train_labels[:num_train])
+        #self.trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=train_batch_size,
+        #                                                shuffle=True, drop_last=True)
+        #self.validateset = torch.utils.data.TensorDataset(train_x[num_train:num_train + num_val],
+        #                                                  train_labels[num_train:num_train + num_val])
+        #self.validateloader = torch.utils.data.DataLoader(self.validateset, batch_size=num_val)
 
         # init test set
         testset = torchvision.datasets.CIFAR10(root='./dataset', train=False, download=False, transform=transform)
-        self.testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset.data),
+        self.testloader = torch.utils.data.DataLoader(testset, batch_size=512,
                                                   shuffle=False, num_workers=2)
 
     def map_feature(self, inputs):
@@ -95,9 +97,14 @@ class Trainer(nn.Module):
         return np.sum((labels.cpu().numpy() == y.cpu().numpy()).astype(int)) / len(labels)
 
     def test(self, model):
-        test_x, test_labels = iter(self.testloader).next()
-        test_x = self.map_feature(test_x)
-        y = model(test_x.to(self.device))
-        predict = y.max(-1)[1].cpu().numpy()
-        accuracy = np.sum((test_labels.cpu().numpy() == np.array(predict)).astype(int)) / len(test_labels)
-        print("Test accuracy: {}".format(accuracy))
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            self.eval()
+            for test_x, test_labels in self.testloader:
+                test_x = self.map_feature(test_x)
+                y = model(test_x.to(self.device))
+                predict = y.max(-1)[1].cpu().numpy()
+                correct += np.sum((test_labels.cpu().numpy() == np.array(predict)).astype(int))
+                total += len(test_labels)
+        print("Test accuracy: {}".format(correct / total))
