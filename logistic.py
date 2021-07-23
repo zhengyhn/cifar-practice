@@ -1,18 +1,20 @@
 import torch
 import torch.nn as nn
-from trainer import Trainer
+from solver import Solver
 
-class LogisticRegression(Trainer):
-    def __init__(self):
-        Trainer.__init__(self, train_percentage=0.8, train_batch_size=64)
-        self.fc = nn.Linear(self.num_feature, self.num_label)
+class LogisticRegression(nn.Module):
+    def __init__(self, num_feature, num_label):
+        nn.Module.__init__(self)
+        self.fc = nn.Linear(num_feature, num_label)
 
     def forward(self, X):
+        X = X.view(len(X), -1)
         predict = torch.sigmoid(self.fc(X))
-        # predict = torch.relu(self.fc(X))
         return predict
 
-logistic = LogisticRegression()
-logistic.to(logistic.device)
-model = logistic.train_model(learning_rate=3e-5, weight_decay=0.01)
-logistic.test(model)
+solver = Solver(train_percentage=0.8, train_batch_size=64)
+model = LogisticRegression(solver.num_feature, solver.num_label)
+solver.train_model(model, learning_rate=2e-5, weight_decay=0.01, epochs=2, warmup_epochs=1, checkpoint='checkpoint/logistic')
+solver.test(model)
+new_model = solver.caribrate(model)
+solver.test_caribrate(new_model)
