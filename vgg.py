@@ -4,11 +4,15 @@ import torch.nn as nn
 from solver import Solver
 import torch.nn.functional as F
 from cnn import CNN
+from dataset import AbstractDataset, CIFAR10Dataset
+import math
 
 class Vgg(CNN):
-    def __init__(self, num_label):
+    def __init__(self, dataset: AbstractDataset):
+        H, W, C = dataset.num_dims()
+        out_dim = H // 8
         self.layers = [
-                ['conv', 3, 64, 3, 1], ['norm'], ['relu'],
+                ['conv', C, 64, 3, 1], ['norm'], ['relu'],
                 ['conv', 64, 64, 3, 1], ['norm'], ['relu'],
                 ['maxPool', 2, 2],
                 ['conv', 64, 128, 3, 1], ['norm'], ['relu'],
@@ -22,19 +26,17 @@ class Vgg(CNN):
                 ['conv', 256, 512, 3, 1], ['norm'], ['relu'],
                 ['conv', 512, 512, 3, 1], ['norm'], ['relu'],
                 ['conv', 512, 512, 3, 1], ['norm'], ['relu'],
-                ['avgPool', 4, 1],
-                ['conv', 512, 256, 1, 0], ['norm'], ['relu'],
-                ['dropout', 0.5],
-                ['conv', 256, 256, 1, 0], ['norm'], ['relu'],
-                ['dropout', 0.5],
+                ['avgPool', out_dim, 1],
                 ['flatten'],
-                ['fc', 256, num_label]
+                ['fc', 512, dataset.num_labels()]
         ]
         CNN.__init__(self)
 
-solver = Solver(train_percentage=0.95, train_batch_size=512)
-model = Vgg(solver.num_label)
-solver.train_model(model, epochs=10, warmup_epochs=5, num_epoch_to_log=5, learning_rate=1e-3, weight_decay=0.001, checkpoint='checkpoint/vgg')
-solver.test(model)
-new_model = solver.caribrate(model)
-solver.test_caribrate(new_model)
+if __name__ == '__main__':
+    dataset = CIFAR10Dataset(train_percentage=0.95)
+    solver = Solver(dataset, train_batch_size=512)
+    model = Vgg(dataset.num_label())
+    solver.train_model(model, epochs=100, warmup_epochs=10, num_epoch_to_log=5, learning_rate=1e-3, weight_decay=1e-4, checkpoint='checkpoint/vgg')
+    solver.test(model)
+    #new_model = solver.caribrate(model)
+    #solver.test_caribrate(new_model)

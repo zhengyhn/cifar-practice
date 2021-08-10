@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from solver import Solver
-from dataset import CIFAR10SplitDataset
+from stomach_dataset import StomachDataset
 from resnet import BlockType, BasicBlock
 from torchvision import models
 from cnn import CNN
@@ -19,7 +19,7 @@ class BigResNet(CNN):
         self._make_layers(BlockType.BASIC, 128, 256, 2)
         self._make_layers(BlockType.BASIC, 256, 512, 2)
         self.layers.extend([
-            #['avgPool', 4, 1],
+            ['avgPool', 4, 1],
             ['flatten'],
             ['fc', 512, num_label]
         ])
@@ -49,17 +49,9 @@ if __name__ == '__main__':
         mp.set_start_method('spawn')
     except RuntimeError:
         pass
-    dataset = CIFAR10SplitDataset(rows=4, cols=4)
+    dataset = StomachDataset()
     trainset, validset, testset = dataset.get()
-    solver = Solver(dataset, checkpoint='checkpoint/mycnn', train_batch_size=128)
+    solver = Solver(dataset, checkpoint='checkpoint/stomach', train_batch_size=4)
     model = BigResNet(dataset.num_label())
-    solver.train_model(model, warmup_epochs=10, num_epoch_to_log=5, learning_rate=1e-3, weight_decay=1e-4, epochs=50)
+    solver.train_model(model, warmup_epochs=10, num_epoch_to_log=1, learning_rate=1e-3, weight_decay=1e-4, epochs=50)
     solver.test(model)
-    #img, _ = testset[0]
-    #img = torch.unsqueeze(img, 0).to(solver.device)
-    #print(img.shape)
-    ##z = model.extract_feature(img)
-    #model.eval()
-    #z = model(img)
-    #print(z.shape)
-    #print(z)

@@ -15,40 +15,61 @@ from prefetch_generator import BackgroundGenerator
 from enum import Enum
 from temperature_scaling import TemperatureScalingModel
 from tqdm import tqdm
+import torch.distributed as dist
 import time
 
 
 class Solver():
-    def __init__(self, dataset, checkpoint, train_batch_size=400):
+    def __init__(self, dataset, local_rank=None, train_batch_size=400):
+        self.local_rank = local_rank
         self.dataset = dataset
-        if not os.path.exists(checkpoint):
-            os.makedirs(checkpoint)
         self.train_batch_size = train_batch_size
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        self.best_model_file = checkpoint + '/best_model.pth'
-        self.best_model_caribrated_file = checkpoint + '/best_model_caribrated.pth'
-        #self.criterion = nn.CrossEntropyLoss().to(self.device)
-        self.criterion = LabelSmoothCELoss()
+        if local_rank is not None:
+            self.device = torch.device('cuda', local_rank) if torch.cuda.is_available() else torch.device('cpu')
+            print(self.device)
+            dist.init_process_group("nccl", rank=local_rank, world_size=torch.cuda.device_count())
+            torch.cuda.set_device(local_rank)
+        else:
+            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.init_dataset()
 
     def init_dataset(self):
         num_worker = torch.get_num_threads() if torch.cuda.is_available() else 0
-        print('num_worker: ', num_worker)
+        if self.local_rank is not None:
+            num_worker = 0
+        #num_worker = 0
+        #pin_memory = False if num_worker == 0 else True
+        pin_memory = True
 
         trainset, validset, testset = self.dataset.get()
-        self.trainloader = DataLoaderX(trainset, batch_size=self.train_batch_size,
-                                   pin_memory=True, num_workers=num_worker, shuffle=True)
-        self.validateloader = DataLoaderX(validset, batch_size=len(validset), pin_memory=True,
-                                      num_workers=num_worker)
-        self.testloader = DataLoaderX(testset, batch_size=512, shuffle=False, pin_memory=True, num_workers=num_worker)
+        if self.local_rank is not None:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
+            self.trainloader = DataLoaderX(trainset, batch_size=self.train_batch_size, num_workers=num_worker,
+                    pin_memory=pin_memory, sampler=train_sampler)
+            valid_sampler = torch.utils.data.distributed.DistributedSampler(validset)
+            self.validateloader = DataLoaderX(validset, batch_size=len(validset), num_workers=num_worker,
+                    pin_memory=pin_memory, sampler=valid_sampler)
+            test_sampler = torch.utils.data.distributed.DistributedSampler(testset)
+            self.testloader = DataLoaderX(testset, batch_size=512, num_workers=num_worker, pin_memory=pin_memory, sampler=test_sampler)
+        else:
+            self.trainloader = DataLoader(trainset, batch_size=self.train_batch_size,
+                                       pin_memory=pin_memory, num_workers=num_worker, shuffle=True)
+            self.validateloader = DataLoader(validset, batch_size=len(validset), pin_memory=pin_memory,
+                                          num_workers=num_worker)
+            self.testloader = DataLoader(testset, batch_size=512, shuffle=False, num_workers=num_worker)
 
-    def train_model(self, model, learning_rate=1e-4, epochs=100, num_epoch_to_log=5, weight_decay=0, warmup_epochs=10):
-        model = model.to(self.device)
+    def train_model(self, model, learning_rate=1e-4, epochs=100, num_epoch_to_log=5, weight_decay=0, warmup_epochs=10, checkpoint=''):
         num_gpu = torch.cuda.device_count()
         if num_gpu > 0:
             cudnn.benchmark = True
-        if num_gpu > 1:
-            model = torch.nn.DataParallel(model, device_ids=range(num_gpu))
+        if self.local_rank is not None:
+            model = torch.nn.parallel.DistributedDataParallel(model.to(self.device), device_ids=[self.local_rank], output_device=self.local_rank)
+        else:
+            model = model.to(self.device)
+            if num_gpu > 1:
+                model = torch.nn.DataParallel(model, device_ids=range(num_gpu))
+        self.criterion = nn.CrossEntropyLoss().to(self.device)
+        #criterion = LabelSmoothCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         #optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=learning_rate, weight_decay=weight_decay)
         warm_up_with_cosine_lr = lambda epoch: (epoch + 1) / warmup_epochs if epoch < warmup_epochs else \
@@ -58,12 +79,18 @@ class Solver():
         #                                                       last_epoch=-1)
         train_runner = TrainRunner(self.device)
         valid_runner = ValidRunner(self.device)
+        self.best_model_file = checkpoint + '/best_model.pth'
+        self.best_model_caribrated_file = checkpoint + '/best_model_caribrated.pth'
+        if not os.path.exists(checkpoint):
+            os.makedirs(checkpoint)
         best_accuracy = 0.0
         start = time.time()
         for epoch in range(epochs):
+            if self.local_rank is not None:
+                self.trainloader.sampler.set_epoch(epoch)
             total_loss, all_logits, all_predicts, all_labels = train_runner.run(model, self.trainloader, self.criterion, optimizer)
             scheduler.step()
-            if epoch % num_epoch_to_log == (num_epoch_to_log - 1):
+            if epoch % num_epoch_to_log == (num_epoch_to_log - 1) and (self.local_rank is None or self.local_rank == 0):
                 train_runner.show_metrics(total_loss, all_logits, all_predicts, all_labels, epoch)
                 total_loss, all_logits, all_predicts, all_labels = valid_runner.run(model, self.validateloader, self.criterion)
                 accuracy = valid_runner.show_metrics(total_loss, all_logits, all_predicts, all_labels, epoch)
@@ -84,20 +111,16 @@ class Solver():
 
     def test(self, model):
         state_dict = torch.load(self.best_model_file)
-        self._test(model, state_dict)
+        model.load_state_dict(state_dict)
+        self._test(model)
 
     def test_caribrate(self, model):
         state_dict = torch.load(self.best_model_caribrated_file)
-        self._test(model, state_dict)
-
-    def _test(self, model, state_dict):
-        test_runner = TestRunner(self.device)
-        num_gpu = torch.cuda.device_count()
-        if num_gpu > 0:
-            cudnn.benchmark = True
-        if num_gpu > 1:
-            model = torch.nn.DataParallel(model, device_ids=range(num_gpu))
         model.load_state_dict(state_dict)
+        self._test(model)
+
+    def _test(self, model):
+        test_runner = TestRunner(self.device)
         total_loss, all_logits, all_predicts, all_labels = test_runner.run(model, self.testloader, self.criterion)
         test_runner.show_metrics(total_loss, all_logits, all_predicts, all_labels, epoch=0)
 
@@ -136,7 +159,7 @@ class AbstractRunner(ABC):
         all_predicts = []
         all_logits = []
         total_loss = 0.0
-        for inputs, labels in tqdm(dataloader):
+        for inputs, labels in dataloader:
             inputs, labels = Variable(inputs).to(self.device, non_blocking=True), Variable(labels).to(self.device, non_blocking=True)
             loss, logits, predicts, labels = self.evaluate(model, inputs, labels, criterion, optimizer)
             total_loss += loss
@@ -190,6 +213,9 @@ class AbstractRunner(ABC):
     def set_mode(self, model):
         pass
 
+    def is_train(self):
+        return False
+
     @abstractmethod
     def evaluate(self, model, inputs, labels, criterion, optimizer, alpha=0.1):
         pass
@@ -203,7 +229,10 @@ class TrainRunner(AbstractRunner):
     def set_mode(self, model):
         model.train()
 
-    def evaluate(self, model, inputs, labels, criterion, optimizer, alpha = 0.8):
+    def is_train(self):
+        return True
+
+    def evaluate(self, model, inputs, labels, criterion, optimizer, alpha = 0.2):
         #logits = model(inputs)
         #loss = criterion(logits, labels)
         #optimizer.zero_grad()

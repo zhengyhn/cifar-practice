@@ -15,9 +15,10 @@ class MLP(nn.Module):
         predict = self.fc(a)
         return predict
 
-solver = Solver(train_batch_size=64)
-model = MLP(solver.num_feature, solver.num_label)
-solver.train_model(model, epochs=20, num_epoch_to_log=5, learning_rate=1e-3, weight_decay=0, checkpoint='checkpoint/mlp')
-solver.test(model)
-new_model = solver.caribrate(model)
-solver.test_caribrate(new_model)
+if __name__ == '__main__':
+    solver = Solver(train_batch_size=64)
+    model = MLP(solver.num_feature, solver.num_label)
+    solver.train_model(model, epochs=20, num_epoch_to_log=5, learning_rate=1e-3, weight_decay=0, checkpoint='checkpoint/mlp')
+    solver.test(model)
+    new_model = solver.caribrate(model)
+    solver.test_caribrate(new_model)

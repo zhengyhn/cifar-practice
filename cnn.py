@@ -31,6 +31,7 @@ class CNN(nn.Module):
                 activation = a
             if activation:
                 activations.append(activation.to(self.device))
+        #print(activations)
         self.module_list = nn.ModuleList(activations)
 
     def build_layer_internal(self, layer):
